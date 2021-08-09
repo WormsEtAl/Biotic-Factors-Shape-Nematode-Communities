@@ -1,0 +1,476 @@
+### Set Libraries ##
+
+library(phyloseq)
+library(agricolae)
+library(mice)
+library(zCompositions)
+library(vegan)
+library(ggplot2)
+library(ape)
+library(compositions)
+library(factoextra)
+library(NbClust)
+library(lmodel2)
+library(stats)
+library(gdm)
+library(tidyverse)
+library(multcomp)
+library(rsq)
+library(lme4)
+
+###Set working directory
+setwd("...Your_working_directory")
+
+##import mapping file
+mapping <-read.table("metadata_only_oct.txt", header=T, row.names=1, comment.char="", sep='\t')
+map <- mapping[order(rownames(mapping)),]
+
+#import OTU tables for nematodes, bacteria, fungi and microbial euaryotes
+bacotu_taxa <- read.table("16S-otu-table-2019-no-august.csv",quote="", sep=",", row.names = 1, header=T, check.names=F,blank.lines.skip = FALSE)
+bacotu_only <- bacotu_taxa[,1:45]
+bacotu <- bacotu_only[,order(colnames(bacotu_only))]
+
+nemotu_taxa <- read.table("Final_2019_nema_only_oct.csv",sep=",", row.names=1,header=T, check.names=F,blank.lines.skip = FALSE)
+nemotu_only <- nemotu_taxa[,1:45]
+nemotu <- nemotu_only[,order(colnames(nemotu_only))]
+
+eukotu_taxa <- read.table("18S_97%_ASV-table-only-oct.csv",sep=",", row.names=1,header=T, check.names=F,blank.lines.skip = FALSE)
+eukotu_only <- eukotu_taxa[,1:45]
+eukotu <- eukotu_only[,order(colnames(eukotu_only))]
+
+funotu_taxa <- read.table("Fungi_from_18S-only-oct.csv",quote= "",sep=",", row.names=1,header=T, check.names=F,blank.lines.skip = FALSE)
+funotu_only <- funotu_taxa[,1:45]
+funotu <- funotu_only[,order(colnames(funotu_only))]
+
+#Check names (all should be true)
+rownames(map) == colnames(nemotu)
+rownames(map) == colnames(bacotu)
+rownames(map) == colnames(eukotu)
+rownames(map) == colnames(funotu)
+
+
+################## Alpha diversity ###############
+
+###import into phyloseq
+Nema18S_otu <- otu_table(nemotu,taxa_are_rows = T)
+Nema18S_otu[1:3,]
+Bac16S_otu <- otu_table(bacotu,taxa_are_rows = T)
+Bac16S_otu[1:3,]
+Euk18S_otu <- otu_table(eukotu,taxa_are_rows = T)
+Euk18S_otu[1:3,]
+Fun18S_otu <- otu_table(funotu,taxa_are_rows = T)
+Fun18S_otu[1:3,]
+
+#order treatments
+map$id = factor(map$Fiel.id, levels=c("Island Lake","Gimlet Lake","Bean Lake","Kokjohn Lake", "Border Lake", "Island Shore","Gimlet Shore","Bean Shore", "Border Shore","Kokjohn Shore","Island Prairie","Gimlet Prairie","Bean Prairie","Border Prairie","Kokjohn Prairie"))
+sample_design <- sample_data(map)
+nemotu_all = phyloseq(Nema18S_otu, sample_data(map))
+nemotu_all
+bacotu_all = phyloseq(Bac16S_otu, sample_data(map))
+bacotu_all
+eukotu_all = phyloseq(Euk18S_otu, sample_data(map))
+eukotu_all
+funotu_all = phyloseq(Fun18S_otu, sample_data(map))
+funotu_all
+
+########calculate richness indexes
+richness_nem <- estimate_richness(nemotu_all,measures=c("Observed","Shannon"))
+richness_bac <- estimate_richness(bacotu_all,measures=c("Observed","Shannon"))
+richness_euk <- estimate_richness(eukotu_all,measures=c("Observed","Shannon"))
+richness_fun <- estimate_richness(funotu_all,measures=c("Observed","Shannon"))
+
+###construct data frame for statistic test among Treatment
+order_richness_nem <- richness_nem[order(rownames(richness_nem)),]
+order_richness_bac <- richness_bac[order(rownames(richness_bac)),]
+order_richness_euk <- richness_euk[order(rownames(richness_euk)),]
+order_richness_fun <- richness_fun[order(rownames(richness_fun)),]
+
+richness_stat_nem<- cbind(order_richness_nem,map)
+richness_stat_bac<- cbind(order_richness_bac,map)
+richness_stat_euk<- cbind(order_richness_euk,map)
+richness_stat_fun<- cbind(order_richness_fun,map)
+
+##GLM for alpha metrics##
+
+####test Observed index significance
+#set Habutat as a factor
+richness_stat_nem$Habitat=as.factor(richness_stat_nem$Habitat)
+
+#Repeat for all metrics and each microorganism (bacteria, fungi, and euks)
+Shannon<- glm(Shannon~Habitat,data =richness_stat_nem, family = gaussian)
+summary(Shannon)
+rsq(Shannon)
+ph <- glht(Shannon, mcp(Habitat = "Tukey"))
+cld(ph)
+
+#perform GLM for each habitat types
+#set Lake as a factor
+richness_stat_nem$Lake=as.factor(richness_stat_nem$Lake)
+
+#Repeat for all metric and microrganisms 
+prairie<-richness_stat_nem[richness_stat_nem$Habitat == "PRAIRIE",]
+shoreline<-richness_stat_nem[richness_stat_nem$Habitat == "SHORELINE",]
+lake<-richness_stat_nem[richness_stat_nem$Habitat == "SEDIMENT",]
+
+##Prairie
+Prairie_GLM<- glm(Shannon~Lake,data =prairie, family = gaussian)
+summary(Prairie_GLM)
+rsq(Prairie_GLM)
+prairie_ph <- glht(Prairie_GLM, mcp(Lake = "Tukey"))
+cld(prairie_ph)
+#Check Distribution
+plot(Prairie_GLM$residuals~Prairie_GLM$fitted.values)
+abline(h=0)
+qqPlot(Prairie_GLM$residuals)
+
+
+Shoreline_GLM<- glm(Shannon~Lake, data = shoreline, family = gaussian)
+summary(Shoreline_GLM)
+rsq(Shoreline_GLM)
+shoreline_ph <- glht(Shoreline_GLM, mcp(Lake = "Tukey"))
+cld(shoreline_ph)
+#Check Distribution
+plot(Shoreline_GLM$residuals~Shoreline_GLM$fitted.values)
+abline(h=0)
+qqPlot(Shoreline_GLM$residuals)
+
+Lake_GLM<- glm(Shannon~Lake,data =lake, family = gaussian)
+summary(Lake_GLM)
+rsq(Lake_GLM)
+lake_ph <- glht(Lake_GLM, mcp(Lake = "Tukey"))
+cld(lake_ph)
+#Check Distribution
+plot(Lake_GLM$residuals~Lake_GLM$fitted.values)
+abline(h=0)
+qqPlot(Lake_GLM$residuals)
+
+##GLM to compare diversity and chemistry
+
+#Subset map
+map_prairie<-map[map$Habitat == "PRAIRIE",]
+map_shoreline<-map[map$Habitat == "SHORELINE",]
+map_lake<-map[map$Habitat == "SEDIMENT",]
+
+#GLM: modify as necessary for chemistries you want to include
+chem_linmod= glm(formula = prairie$Shannon~prairie$Potassium_ppm, data = prairie,family = gaussian(link = "log"))
+summary(chem_linmod)
+rsq(chem_linmod)
+#Check Ditribution
+plot(chem_linmod$residuals~chem_linmod$fitted.values)
+abline(h=0)
+qqPlot(chem_linmod$residuals)
+
+
+
+
+###########Beta diversity#############
+
+###Aitchinson Distance for nematodes
+count <- 5#this is the chosen cutoff (1 per lake)
+Nem_sd_can_2 <- data.frame(nemotu[which(apply(nemotu, 1, function(x){mean(x)}) > count),],
+                            check.names=F)
+Nem_sd_can_czm <- cmultRepl(Nem_sd_can_2,  label=0, method="CZM")
+#Log-ratio transform the data
+#CLR
+Nem_sd_can_czm_clr <- clr(Nem_sd_can_czm)
+#Calculate Distances
+#CLR transformed data
+Nem_sd_can_czm_clr.dist <- vegdist(t(Nem_sd_can_czm_clr), method = "euclidean", diag = FALSE, upper = TRUE)
+
+
+###Aitchinson Distance for Bacteria
+count <- 5#this is the chosen cutoff 
+Bac_sd_can_2 <- data.frame(bacotu[which(apply(bacotu, 1, function(x){mean(x)}) > count),],
+                           check.names=F)
+Bac_sd_can_czm <- cmultRepl(Bac_sd_can_2,  label=0, method="CZM")
+#Log-ratio transform the data
+#CLR
+Bac_sd_can_czm_clr <- clr(Bac_sd_can_czm)
+#Calculate Distances
+#CLR transformed data
+Bac_sd_can_czm_clr.dist <- vegdist(t(Bac_sd_can_czm_clr), method = "euclidean", diag = FALSE, upper = TRUE)
+
+
+
+###Aitchinson Distance for Microbial Eukaryotes
+count <- 5#this is the chosen cutoff 
+Euk_sd_can_2 <- data.frame(eukotu[which(apply(eukotu, 1, function(x){mean(x)}) > count),],
+                           check.names=F)
+Euk_sd_can_czm <- cmultRepl(Euk_sd_can_2,  label=0, method="CZM")
+#Log-ratio transform the data
+#CLR
+Euk_sd_can_czm_clr <- clr(Euk_sd_can_czm)
+#Calculate Distances
+#CLR transformed data
+Euk_sd_can_czm_clr.dist <- vegdist(t(Euk_sd_can_czm_clr), method = "euclidean", diag = FALSE, upper = TRUE)
+
+
+
+###Aitchinson Distance for Fungi
+count <- 5#this is the chosen cutoff 
+Fun_sd_can_2 <- data.frame(funotu[which(apply(funotu, 1, function(x){mean(x)}) > count),],
+                           check.names=F)
+Fun_sd_can_czm <- cmultRepl(Fun_sd_can_2,  label=0, method="CZM")
+#Log-ratio transform the data
+#CLR
+Fun_sd_can_czm_clr <- clr(Fun_sd_can_czm)
+#Calculate Distances
+#CLR transformed data
+Fun_sd_can_czm_clr.dist <- vegdist(t(Fun_sd_can_czm_clr), method = "euclidean", diag = FALSE, upper = TRUE)
+
+
+
+##### Beta-diversity Plotting #####
+## Define variables for plot code
+#Modify for each microorganisms 
+plot.dm<-as.matrix(Nem_sd_can_czm_clr.dist) # Change the source of the plot data here
+
+# FUNCTION:
+Plot_ConvexHull<-function(xcoord, ycoord, lcolor){
+  hpts <- chull(x = xcoord, y = ycoord)
+  hpts <- c(hpts, hpts[1])
+  lines(xcoord[hpts], ycoord[hpts], col = lcolor)
+} 
+# END OF FUNCTION
+# Now run the Principle Coordinate Analysis ("pcoa") in package ape:
+pcoa.pts<-pcoa(plot.dm,correction="cailliez")
+x.minimum<-min(pcoa.pts$vectors[,1])
+x.maximum<-max(pcoa.pts$vectors[,1])
+y.minimum<-min(pcoa.pts$vectors[,2])
+y.maximum<-max(pcoa.pts$vectors[,2])
+
+# And to be fancy, b/c Jack put the time into figuring this out,
+# calculate the % variation explained by each axis
+# getting percent explained by each PC vector
+vars_percent <- (pcoa.pts$values$Eigenvalues / sum(pcoa.pts$values$Eigenvalues)) * 100
+# Step 1: make very simple plot, no colors
+
+plot(pcoa.pts$vectors[,2] ~ pcoa.pts$vectors[,1],
+     xlab=paste("PCo1: ", round(vars_percent[1], 2), "%", sep=""),
+     ylab=paste("PCo2: ", round(vars_percent[2], 2), "%", sep=""),
+     cex=1,col="white",#main="Nematode Community", # CHANGE this to be the title of the plot
+     xlim=c(x.minimum-0.5, x.maximum+0), ylim=c(y.minimum-0.5, y.maximum+0)
+)
+
+
+# Step 2: now subset vectors for the positions in the alpha file that correspond to cohcryo
+Bp.ptx <- which((map$Grower=="BORDER LAKE") & (map$Field.ID== "PRAIRIE"))
+Bs.ptx <- which((map$Grower=="BORDER LAKE") & (map$Field.ID== "SHORELINE"))
+Bl.ptx <- which((map$Grower=="BORDER LAKE") & (map$Field.ID== "SEDIMENT"))
+Ip.ptx <- which((map$Grower=="ISLAND LAKE") & (map$Field.ID== "PRAIRIE"))
+Is.ptx <- which((map$Grower=="ISLAND LAKE") & (map$Field.ID== "SHORELINE"))
+Il.ptx <- which((map$Grower=="ISLAND LAKE") & (map$Field.ID== "SEDIMENT"))
+Gp.ptx <- which((map$Grower=="GIMLET LAKE") & (map$Field.ID== "PRAIRIE"))
+Gs.ptx <- which((map$Grower=="GIMLET LAKE") & (map$Field.ID== "SHORELINE"))
+Gl.ptx <- which((map$Grower=="GIMLET LAKE") & (map$Field.ID== "SEDIMENT"))
+BNp.ptx <- which((map$Grower=="BEAN LAKE") & (map$Field.ID== "PRAIRIE"))
+BNs.ptx <- which((map$Grower=="BEAN LAKE") & (map$Field.ID== "SHORELINE"))
+BNl.ptx <- which((map$Grower=="BEAN LAKE") & (map$Field.ID== "SEDIMENT"))
+Kp.ptx <- which((map$Grower=="KOKJOHN LAKE") & (map$Field.ID== "PRAIRIE"))
+Ks.ptx <-  which((map$Grower=="KOKJOHN LAKE") & (map$Field.ID== "SHORELINE"))
+Kl.ptx <- which((map$Grower=="KOKJOHN LAKE") & (map$Field.ID== "SEDIMENT"))
+Praire <- which(map$Field.ID == "PRAIRIE")
+Shore <- which(map$Field.ID == "SHORELINE")
+Sediment <-which(map$Field.ID=="SEDIMENT")
+# plot the points for each group using points()
+points(pcoa.pts$vectors[Il.ptx,2] ~ pcoa.pts$vectors[Il.ptx,1],pch=17, cex=2.3, col="blue")
+points(pcoa.pts$vectors[Gl.ptx,2] ~ pcoa.pts$vectors[Gl.ptx,1],pch=17, cex=2.3, col="lightblue")
+points(pcoa.pts$vectors[BNl.ptx,2] ~ pcoa.pts$vectors[BNl.ptx,1], pch=17, cex=2.3, col="darkgreen")
+points(pcoa.pts$vectors[Kl.ptx,2] ~ pcoa.pts$vectors[Kl.ptx,1],pch=17, cex=2.3, col="yellow")
+points(pcoa.pts$vectors[Bl.ptx,2] ~ pcoa.pts$vectors[Bl.ptx,1], pch=17, cex=2.3, col="red")
+points(pcoa.pts$vectors[Is.ptx,2] ~ pcoa.pts$vectors[Is.ptx,1],pch=16, cex=2.3, col="blue")
+points(pcoa.pts$vectors[Gs.ptx,2] ~ pcoa.pts$vectors[Gs.ptx,1],pch=16, cex=2.3, col="lightblue")
+points(pcoa.pts$vectors[BNs.ptx,2] ~ pcoa.pts$vectors[BNs.ptx,1], pch=16, cex=2.3, col="darkgreen")
+points(pcoa.pts$vectors[Ks.ptx,2] ~ pcoa.pts$vectors[Ks.ptx,1],pch=16, cex=2.3, col="yellow")
+points(pcoa.pts$vectors[Bs.ptx,2] ~ pcoa.pts$vectors[Bs.ptx,1],pch=16, cex=2.3, col="red")
+points(pcoa.pts$vectors[Ip.ptx,2] ~ pcoa.pts$vectors[Ip.ptx,1],pch=15, cex=2.3, col= "blue")
+points(pcoa.pts$vectors[Gp.ptx,2] ~ pcoa.pts$vectors[Gp.ptx,1],pch=15, cex=2.3, col="lightblue")
+points(pcoa.pts$vectors[BNp.ptx,2] ~ pcoa.pts$vectors[BNp.ptx,1],pch=15, cex=2.3, col="darkgreen")
+points(pcoa.pts$vectors[Kp.ptx,2] ~ pcoa.pts$vectors[Kp.ptx,1],pch=15, cex=2.3, col="yellow")
+points(pcoa.pts$vectors[Bp.ptx,2] ~ pcoa.pts$vectors[Bp.ptx,1],pch=15, cex=2.3, col="red")
+Plot_ConvexHull(xcoord =pcoa.pts$vectors[Praire,1], ycoord = pcoa.pts$vectors[Praire,2], lcolor = "grey")
+Plot_ConvexHull(xcoord = pcoa.pts$vectors[Shore,1], ycoord = pcoa.pts$vectors[Shore,2], lcolor = "grey")
+Plot_ConvexHull(xcoord = pcoa.pts$vectors[Sediment,1], ycoord = pcoa.pts$vectors[Sediment,2],lcolor = "grey")
+
+
+legend(-23,-15, legend=c("Island","Gimlet","Bean","Kokjohn","Border"), col=c("blue","lightblue","darkgreen","yellow","red"), pch=c(18,18,18,18,18), cex= 1.2)
+legend(20,40, legend=c("Sediment", "Shoreline", "Prairie"), col=c("black", "black", "black"), pch=c(17,16,15), cex= 1.2)
+
+
+#####PERMANOVA
+Nem.czm.perm <- adonis(Nem_sd_can_czm_clr.dist~map$Habitat*map$Lake) 
+Nem.czm.perm
+
+Bac.czm.perm <- adonis(Bac_sd_can_czm_clr.dist~map$Habitat*map$Lake) 
+Bac.czm.perm
+
+Euk.czm.perm <- adonis(Euk_sd_can_czm_clr.dist~map$Habitat*map$Lake) 
+Euk.czm.perm
+
+Fun.czm.perm <- adonis(Fun_sd_can_czm_clr.dist~map$Habitat*map$Lake) 
+Fun.czm.perm
+
+
+
+#####Correlation Plot#####
+
+#Subset files for habitat: repeat with shoreline and prairie
+map_subset<-subset(map, map$Habitat == "SEDIMENT")
+sub.bac<-subset(bacotu, select=colnames(bacotu) %in% rownames(map_subset))
+sub.euk<-subset(eukotu, select=colnames(eukotu) %in% rownames(map_subset))
+sub.nem<-subset(nemotu, select=colnames(nemotu) %in% rownames(map_subset))
+sub.fun<-subset(funotu, select=colnames(funotu) %in% rownames(map_subset))
+
+#Define numeric variables included in correlation plots
+Potassium=as.numeric(map_subset$Potassium_ppm)
+Nitrate=as.numeric(map_subset$Nitrate.N.ppm.N)
+Calcium=as.numeric(map_subset$Calcium_ppm)
+Magnesium=as.numeric(map_subset$Magnesium_ppm)
+Sodium=as.numeric(map_subset$Sodium_ppm)
+pH=as.numeric(map_subset$Soil_pH)
+CEC=as.numeric(map_subset$CEC.Sum.of.Cations.me.100g)
+Salt=as.numeric(map_subset$Salts_mmho.cm)
+Chloride=as.numeric(map_subset$Chloride_ppm)
+Boron=as.numeric(map_subset$Boron_ppm)
+Sulfate=as.numeric(map_subset$Sulfate.S_ppm)
+Copper=as.numeric(map_subset$Copper_ppm)
+Manganese=as.numeric(map_subset$Manganese_ppm)
+Iron=as.numeric(map_subset$Iron_ppm)
+OrganicMatter = as.numeric(map_subset$Organic.Matter.LOI..)
+Zinc = as.numeric(map_subset$Zinc_ppm)
+MicrobialBiomass = as.numeric(map_subset$microbial_biomass)
+SoilMoisture = as.numeric(map_subset$soil_moisture_per_gram_soil)
+Elevation = as.numeric(map_subset$Elevation.m.)
+Longitude = as.numeric(map_subset$Longitude)
+Latitude  = as.numeric(map_subset$Latitude)
+
+#calculate alpha diversity
+nemotu_cor = otu_table(sub.nem,taxa_are_rows = T)
+otu_allnem = phyloseq(nemotu_cor, sample_data(map_subset))
+dm_nem = estimate_richness(t(otu_allnem),measures=c("Shannon"))
+
+eukotu_cor <- otu_table(sub.euk,taxa_are_rows = T)
+otu_alleuk = phyloseq(eukotu_cor, sample_data(map_subset))
+dm_18S <- estimate_richness(t(otu_alleuk),measures=c("Shannon"))
+
+funotu_cor <- otu_table(sub.fun,taxa_are_rows = T)
+otu_allfun = phyloseq(funotu_cor, sample_data(map_subset))
+dm_fun <- estimate_richness(t(otu_allfun),measures=c("Shannon"))
+
+bacotu_cor <- otu_table(sub.bac,taxa_are_rows = T)
+otu_allbac = phyloseq(bacotu_cor, sample_data(map_subset))
+dm_16S <- estimate_richness(t(otu_allbac),measures=c("Shannon"))
+
+# Scale on 0-1 scale
+scale01 <- function(x){x/max(x)}
+Euk_Shannon <- scale01(dm_18S)
+colnames(Euk_Shannon)[colnames(Euk_Shannon) == 'Shannon'] <- 'EukaryoteShannon'
+
+Bac_Shannon <- scale01(dm_16S)
+colnames(Bac_Shannon)[colnames(Bac_Shannon) == 'Shannon'] <- 'BacteriaShannon'
+
+Fung_Shannon <- scale01(dm_fun)
+colnames(Fung_Shannon)[colnames(Fung_Shannon) == 'Shannon'] <- 'FungiShannon'
+
+Nem_Shannon <- scale01(dm_nem)
+colnames(Nem_Shannon)[colnames(Nem_Shannon) == 'Shannon'] <- 'NematodeShannon'
+
+#Variables co-correlation plot
+nonzero.numericvars=cbind(pH,Sodium, Potassium, Salt,CEC, Boron, Chloride,Calcium,Magnesium,  Zinc, Iron,OrganicMatter, SoilMoisture,Elevation, Longitude, Latitude,MicrobialBiomass, Nem_Shannon, Bac_Shannon, Fung_Shannon, Euk_Shannon)
+vars_cor<-cor(nonzero.numericvars[,1:21], method="pearson")
+#determine significance
+res1 <- cor.mtest(vars_cor, conf.level = .95)
+#plot
+corrplot(vars_cor, type= "upper", diag = F,p.mat = res1$p, tl.col = "black", method = "color",
+         insig = "label_sig", pch.col = "white")
+
+dev.off()
+
+
+
+###########Generalized Dissimilarity Model#############
+
+source("jld_gdm_helpers.R")
+# define aitchison_dist function (euclidean distance of Isometric Log Ratios)
+# unlike dist() and vegdist(), this assumes each COLUMN is a sample
+aitchison_dist <- function(x){
+  ilrmat <- apply(X=x, MAR=2, FUN=function(x){as.vector(ilr(x))})
+  return(dist(t(ilrmat)))
+}
+
+#####Use data subset by habitat from Correlation plots (line 317)
+#test (all should return TRUE)
+all(colnames(sub.nem) == colnames(sub.bac))
+all(colnames(sub.euk) == colnames(sub.bac))
+all(colnames(sub.nem) == colnames(sub.fun))
+all(colnames(sub.nem) == map$SampleID)
+
+# drop samples with missing data
+samps2keep <- colSums(sub.fun) > 0
+asvtab_16S <- sub.bac[,samps2keep]
+asvtab_fun <- sub.fun[,samps2keep]
+asvtab_NEM <- sub.nem[,samps2keep]
+asvtab_18S <- sub.euk[,samps2keep]
+metadata <- map[samps2keep,]
+
+# make distance matrices using Atchinson distance/ chao
+# will take a second because ilr() is kinda slow
+drop_empty <- function(x){return(x[rowSums(x) > 0,])}
+dm_NEM <- aitchison_dist(x=(drop_empty(asvtab_NEM)))
+
+#alpha
+eukotu <- otu_table(asvtab_18S,taxa_are_rows = T)
+otu_all = phyloseq(eukotu, sample_data(map))
+alph_18S <- estimate_richness(t(otu_all),measures=c("Shannon", "Observed"))
+
+funotu <- otu_table(asvtab_fun,taxa_are_rows = T)
+otu_allf = phyloseq(funotu, sample_data(map))
+alph_fun <- estimate_richness(t(otu_allf),measures=c("Shannon", "Observed"))
+
+bacotu <- otu_table(asvtab_16S,taxa_are_rows = T)
+otu_allb = phyloseq(bacotu, sample_data(map))
+alph_16S <- estimate_richness(t(otu_allb),measures=c("Shannon", "Observed"))
+
+# ensure matrices are 0-1 scaled
+scale01 <- function(x){x/max(x)}
+dm_18S <- scale01(alph_18S)
+dm_16S <- scale01(alph_16S)
+dm_fun <- scale01(alph_fun)
+dm_NEM <- scale01(dm_NEM)
+
+# make site-pair-table for GDM
+predictor_list <- list(
+  Ca = as.numeric(map_subset$Calcium_ppm),
+  Fe = as.numeric(map_subset$Iron_ppm),
+  K = as.numeric(map_subset$Potassium_ppm),
+  pH = as.numeric(map_subset$Soil_pH),
+  Na = as.numeric(map_subset$Sodium_ppm),
+  OM = as.numeric(map_subset$Organic.Matter.LOI..),
+  Cl= as.numeric(map_subset$Chloride_ppm),
+  Zn = as.numeric(map_subset$Zinc_ppm),
+  #Moisture_content= as.numeric(map_subset$soil_moisture_per_gram_soil),
+  Microbial_Biomass=as.numeric(map_subset$microbial_biomass),
+  Fungi =dm_fun$Shannon,
+  Bacteria =dm_16S$Shannon,
+  Euk =dm_18S$Shannon
+)
+spt_full <- site_pair_from_list( 
+  responseMat=as.matrix(dm_NEM),
+  predList=predictor_list
+)
+
+# make gdm model
+mod_gdm <- gdm(spt_full, geo=F)
+
+## make final gdm plot
+#Abiotic factors in blues, biotic factors in reds
+plot_gdm_jld(mod_gdm, pred_colors=c("powderblue", "turquoise","blue","cyan","hotpink","red","tomato3", "orange"), coef_threshold=0, points_cex=1)
+
+#linear model
+lm_gdm= lm(mod_gdm$observed~mod_gdm$predicted)
+summary(lm_gdm)
+
+###Perform GDM for Praire, Shoreline and Lake Sediment. 
+
+
+
