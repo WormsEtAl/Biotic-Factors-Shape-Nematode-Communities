@@ -1,0 +1,129 @@
+#Nebraska Sample Nematode data for Alkaline Lakes
+
+#activate qiime
+source activate qiime2-2019.7
+
+#make and set directory
+mkdir Nematode_2019_SALCI
+cd Nematode_2019_SALCI
+
+#make directory for reads
+mkdir reads
+
+#upload data into Nematode_2019_SALCI/reads
+scp reads/* user:Nematode_2019_SALCI/reads
+
+#import data
+qiime tools import \
+  --type 'SampleData[PairedEndSequencesWithQuality]' \
+  --input-path reads \
+  --input-format CasavaOneEightSingleLanePerSampleDirFmt \
+  --output Nema_demux.qzv
+
+#visualize the data
+qiime demux summarize \
+  --i-data Nema_demux.qza \
+  --o-visualization Nema_demux.qzv
+
+#denoise the data
+qiime cutadapt trim-paired \
+--i-demultiplexed-sequences Nema_demux.qza\
+--p-cores 16 \
+--p-adapter-f GTACACACCGCCCGTC...GTAGGTGAACCTGCAGAAGGATCA \
+--p-adapter-r TGATCCTTCTGCAGGTTCACCTAC...GACGGGCGGTGTGTAC \
+--o-trimmed-sequences trimmed-seqs.qza
+
+#visualize trimmed
+qiime demux summarize \
+  --i-data trimmed-seqs.qza \
+  --o-visualization trimmed-seqs.qzv
+
+#join sequences
+qiime vsearch join-pairs \
+--i-demultiplexed-seqs trimmed_seqs.qza \
+--o-joined-sequences joined_trimmed.qza
+
+#visualize joined
+qiime demux summarize \
+  --i-data joined_trimmed.qza \
+  --o-visualization joined_trimmed.qzv
+
+#quality filter
+qiime quality-filter q-score-joined \
+  --i-demux joined_trimmed.qza \
+  --o-filtered-sequences joined-filtered.qza \
+  --o-filter-stats joined-filter-stats.qza
+  
+#visualize filtered
+qiime demux summarize \
+  --i-data joined-filtered.qza \
+  --o-visualization joined-filtered.qzv
+
+
+#dereplicate
+qiime vsearch dereplicate-sequences \
+  --i-sequences joined-filtered.qza  \
+  --o-dereplicated-table derep-table.qza  \
+  --o-dereplicated-sequences derep-rep-seqs.qza
+
+
+#99% cluster
+qiime vsearch cluster-features-de-novo  \
+  --i-table derep-table.qza \
+  --i-sequences derep-rep-seqs.qza \
+  --p-perc-identity 0.99 \
+  --o-clustered-table table-dn-99.qza \
+  --o-clustered-sequences rep-seqs-dn-99.qza
+
+
+#Chimera checking
+qiime vsearch uchime-denovo \
+  --i-table table-99-cluster.qza \
+  --i-sequences rep-seq-99-cluster.qza \
+  --p-minh 1.0 \
+  --output-dir uchime-out
+  
+#visualize:
+qiime metadata tabulate \
+  --m-input-file uchime-out\stats.qza \
+  --o-visualization uchime_stats.qzv
+  
+#filter table
+qiime feature-table filter-features \
+  --i-table table-99-cluster.qza \
+  --m-metadata-file uchime-out\chimeras.qza \
+  --p-exclude-ids \
+  --o-filtered-table table-nonchimeric.qza
+qiime feature-table filter-seqs \
+  --i-data rep-seq-99-cluster.qza \
+  --m-metadata-file uchime-out\chimeras.qza \
+  --p-exclude-ids \
+  --o-filtered-data rep-seqs-nonchimeric.qza
+qiime feature-table summarize \
+  --i-table table-nonchimeric.qza \
+  --o-visualization table-nonchimeric.qzv
+
+#Export OTU table
+qiime tools export \
+  --input-path table-nonchimeric.qza \ 
+  --output-path Nema-exported-feature-table
+
+#Export rep-seq to get fasta file
+qiime tools export \
+  --input-path rep_seqs-nonchimeric.qza \
+  --output-path Nema-sequences
+
+#move to qiime1 environment
+source activate qiime1
+
+#set blast pathway
+export BLASTMAT=$HOME/Software/blast-2.2.22/data
+
+#assign taxonomy
+#Uses Silva111 database
+assign_taxonomy.py \
+  -i Nema-sequences/dna-sequences.fasta \
+  -r /home/uflJPM/kgattoniufl19/suppsoil/Silva_111_full_unique.fasta \
+  -t /home/uflJPM/kgattoniufl19/suppsoil/Silva_111_taxa_map_full.txt \
+  -m blast \
+  -o Nema-taxonomy
