@@ -1,1 +1,86 @@
-Test 
+#Make directories
+mkdir Bacteria
+cd bacteria
+mkdir reads
+
+
+# download data into ron
+(qiime2-2019.7) qiime2@qiime2core2019-7:~/Desktop/alkalinelakes/nematode_2019$ scp reads/* kgattoniufl19@ron.sr.unh.edu:Bacteria/reads
+
+#import data in correct format
+ qiime tools import --type 'SampleData[PairedEndSequencesWithQuality]' --input-path reads --input-format CasavaOneEightSingleLanePerSampleDirFmt --output-path 16S_demux.qza  
+#visualize
+ qiime demux summarize   --i-data 16S_demux.qza     --o-visualization 16S_demux.qzv
+
+#trim the sequences
+
+
+qiime cutadapt trim-paired \
+--i-demultiplexed-sequences 16S_demux.qza \
+--p-cores 16 \
+--p-front-f GTGCCAGCMGCCGCGGTAA \
+--p-front-r GGACTACNNGGGTATCTAAT  \
+--o-trimmed-sequences primer-trimmed-16S.qza \
+--verbose 
+
+qiime cutadapt trim-paired --i-demultiplexed-sequences 16S_demux.qza --p-cores 10  --p-adapter-f ATTAGAWACCCBDGTAGTCC --p-front-f GTGCCAGCMGCCGCGGTAA   --p-front-r GGACTACHVGGGTWTCTAAT --p-adapter-r TTACCGCGGCKGCTGGCAC --o-trimmed-sequences Bacteria_trimmed-seqs.qza --verbose 
+#visualize
+ qiime demux summarize   --i-data Bacteria_trimmed-seqs.qza   --o-visualization Bacteria_trimmed-seqs.qzv
+#join sequences
+qiime vsearch join-pairs --i-demultiplexed-seqs Bacteria_trimmed-seqs.qza  --output-dir trimmed-joined
+#visualize
+qiime demux summarize   --i-data joined_sequences.qza   --o-visualization joined_sequences.qzv
+
+
+#quality filter
+nohup qiime quality-filter q-score-joined   --i-demux joined_sequences.qza   --p-min-quality 30   --o-filtered-sequences Bacteria-joined-filtered.qza   --o-filter-stats Bacteria-joined-filter-stats.qza &
+
+
+#dereplicate
+qiime vsearch dereplicate-sequences \
+  --i-sequences Bacteria-joined-filtered.qza \
+  --o-dereplicated-table Bacteria-derep-table.qza \
+  --o-dereplicated-sequences Bacteria-derep-seqs.qza
+
+qiime feature-table tabulate-seqs \
+  --i-data Bacteria-derep-seqs.qza \
+  --o-visualization Bacteria-derep-seqs.qzv
+
+
+#cluster (97% cluster)
+
+nohup qiime vsearch cluster-features-de-novo  --i-table Bacteria-derep-table.qza --i-sequences Bacteria-derep-seqs.qza --p-perc-identity 0.97 --o-clustered-table Bacteria-table-dn-97.qza --o-clustered-sequences Bacteria-rep-seqs-dn-97.qza &
+
+#Run de novo chimera checking
+nohup qiime vsearch uchime-denovo \
+  --i-table Bacteria-table-dn-97.qza  \
+  --i-sequences  Bacteria-rep-seqs-dn-97.qza \
+--p-minh 1.0 \
+  --output-dir uchime-dn-out &
+#visualize:
+qiime metadata tabulate \
+  --m-input-file stats.qza \
+  --o-visualization stats.qzv
+#fix table
+qiime feature-table filter-features \
+  --i-table ../Bacteria-table-dn-97.qza  --m-metadata-file chimeras.qza  --p-exclude-ids --o-filtered-table table-nonchimeric.qza
+qiime feature-table filter-seqs \
+  --i-data ../Bacteria-rep-seqs-dn-97.qza \
+  --m-metadata-file chimeras.qza \
+  --p-exclude-ids \
+  --o-filtered-data rep-seqs-nonchimeric.qza
+qiime feature-table summarize \
+  --i-table table-nonchimeric.qza \
+  --o-visualization table-nonchimeric.qzv
+
+#OTU table conversion
+qiime tools export --input-path table-nonchimeric.qza --output-path Bacteria-exported-feature-table
+
+#Export rep-seq to get fasta file
+qiime tools export --input-path rep-seqs-nonchimeric.qza --output-path Bacteria-seqs
+
+#May need to run this code pryer to assigning taxonomy if you get the blast mat environment not met thing
+export BLASTMAT=$HOME/Software/blast-2.2.22/data
+
+#assign taxonomy
+nohup assign_taxonomy.py -i Bacteria-seqs/dna-sequences.fasta -r /home/uflJPM/kgattoniufl19/suppsoil/Silva_111_full_unique.fasta -t /home/uflJPM/kgattoniufl19/suppsoil/Silva_111_taxa_map_full.txt -m blast -o Bacteria-taxonomy &
